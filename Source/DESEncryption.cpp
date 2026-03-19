@@ -1,6 +1,6 @@
 #include "DESEncryption.h"
 // Encrypts a 64-bit plaintext block using the DES algorithm and a 64-bit key
-std::bitset<64> DES::encrypt(const std::bitset<64>& plaintext, const std::bitset<64>& key)
+std::bitset<64> DES::encrypt(const std::bitset<64>& plaintext, const std::bitset<48> subkeys[16])
 {
 	// Initial Permutation
 	std::bitset<64> block;
@@ -11,10 +11,6 @@ std::bitset<64> DES::encrypt(const std::bitset<64>& plaintext, const std::bitset
 	std::bitset<32> left = block.to_ullong() >> 32;
 	std::bitset<32> right = block.to_ullong() & 0xFFFFFFFF;
 	
-	// Generate subkeys
-	std::bitset<48> subkeys[16];
-	keyExpansion(subkeys, key);
-
 	// 16 rounds of DES
 	// Each round: new R = L XOR f(R, subkey), new L = old R
 	for (int round = 0; round < 16; round++) {
