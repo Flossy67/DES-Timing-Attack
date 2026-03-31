@@ -7,5 +7,6 @@ namespace DES {
 	std::bitset<48> expand(const std::bitset<32>& half_block);
 	std::bitset<32> fFunction(const std::bitset<32>& half_block, const std::bitset<48>& round_key);
 	std::bitset<32> substitute(const std::bitset<48>& expanded);
+	std::bitset<32> substituePadded(const std::bitset<48>& expanded);
 	std::bitset<32> permute(const std::bitset<32>& input);
 }

@@ -1,6 +1,17 @@
 #pragma once
+#include <cstdint>
 
 namespace DES {
+
+    struct alignas(64) PaddedSBoxEntry {
+        uint8_t value;
+        uint8_t _pad[63];
+    };
+
+    extern PaddedSBoxEntry PaddedSBoxes[8][4][16];
+
+    void initPaddedSBoxes(); 
+
     // Expansion Function Table
     static constexpr uint8_t E[48] = {
             32, 1,  2,  3,  4,  5,
