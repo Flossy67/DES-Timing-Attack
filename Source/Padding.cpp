@@ -1,4 +1,7 @@
 #include "Padding.h"
+
+#include <vector>
+#include <cstdint>
 #include <stdexcept>
 
 void Padding::pkcs7Pad(std::vector<uint8_t>& data) {

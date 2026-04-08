@@ -1,6 +1,5 @@
 #pragma once
-#include "KeyExpansion.h"
-#include "DESTable.h"
+#include <bitset>
 
 namespace DES {
 	std::bitset<64> encrypt(const std::bitset<64>& plaintext, const std::bitset<48> subkeys[16]);

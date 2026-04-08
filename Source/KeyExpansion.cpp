@@ -1,5 +1,8 @@
 #include "KeyExpansion.h"
 
+#include <cstdint>
+#include <bitset>
+
 void DES::keyExpansion(std::bitset<48> subkeys[16], const std::bitset<64>& key) {
 	std::bitset<56> cd = permutedChoice1(key);
 

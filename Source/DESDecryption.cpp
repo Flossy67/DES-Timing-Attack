@@ -1,4 +1,9 @@
 #include "DESDecryption.h"
+#include "DESEncryption.h"
+#include "DESTable.h"
+
+#include <cstdint>
+#include <bitset>
 
 std::bitset<64> DES::decrypt(const std::bitset<64>& ciphertext, const std::bitset<48> subkeys[16]) {
 	std::bitset<64> block;

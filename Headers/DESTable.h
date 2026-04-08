@@ -3,12 +3,11 @@
 
 namespace DES {
 
-    struct alignas(64) PaddedSBoxEntry {
-        uint8_t value;
-        uint8_t _pad[63];
+    struct alignas(64) PaddedSBoxHalf {
+        uint8_t value[2][16];  // 2 rows, 32 bytes data
+        uint8_t _pad[32];      // pad to 64 bytes
     };
-
-    extern PaddedSBoxEntry PaddedSBoxes[8][4][16];
+    extern PaddedSBoxHalf PaddedSBoxHalves[8][2];
 
     void initPaddedSBoxes(); 
 

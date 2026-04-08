@@ -6,7 +6,7 @@
 
 // Pointer to first byte of sboxes
 extern const uint8_t* g_sboxBase;
-constexpr size_t SBOX_FLUSH_BYTES = 8 * 4 * 16 * 64; 
+constexpr size_t SBOX_FLUSH_BYTES = 8 * 2 * 64; 
 
 
 // Pin current thread to core to reduce noise in timing measurements

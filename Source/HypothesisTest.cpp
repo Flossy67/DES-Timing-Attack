@@ -1,11 +1,14 @@
 #include "HypothesisTest.h"
+#include "DESTable.h"
+#include "DataCollection.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <bitset>
 #include <string>
-
+#include <vector>
+#include <cstdint>
+#include <utility>
 
 static std::bitset<64> applyIP(uint64_t plaintext) {
     static const uint8_t IP[64] = {
@@ -24,7 +27,6 @@ static std::bitset<64> applyIP(uint64_t plaintext) {
     for (int i = 0; i < 64; i++) {
         block[63 - i] = input[64 - IP[i]];
     }
-         
     return block;
 }
 
@@ -33,7 +35,6 @@ static std::bitset<32> getRightHalf(const std::bitset<64>& block) {
     for (int i = 0; i < 32; i++) {
         R[i] = block[i];
     }
-        
     return R;
 }
 
@@ -61,108 +62,116 @@ static uint8_t getSboxInput(const std::bitset<48>& expanded, int s) {
     int base = 47 - 6 * s;
     for (int i = 0; i < 6; i++) {
         val = (val << 1) | (expanded[base - i] ? 1 : 0);
-    } 
+    }
     return val;
 }
 
-
-static double mean(const std::vector<uint64_t>& v) {
-    if (v.empty()) return 0.0;
-    double sum = 0.0;
-    for (auto x : v) sum += static_cast<double>(x);
-    return sum / static_cast<double>(v.size());
+static uint8_t sboxLookup(int sbox, uint8_t input6) {
+    uint8_t row = ((input6 >> 5) & 1) << 1 | (input6 & 1);
+    uint8_t col = (input6 >> 1) & 0x0F;
+    return DES::SBoxes[sbox][row][col];
 }
 
-// Welch's t-statistic — does not assume equal variance
-static double welchT(const std::vector<uint64_t>& a, const std::vector<uint64_t>& b) {
-    if (a.size() < 2 || b.size() < 2) {
-        return 0.0;
+static double computeFStat(const std::vector<uint8_t>& sboxInputs, const std::vector<double>& timings, size_t start, size_t end, int targetSbox,uint8_t k) {
+    size_t N = end - start;
+    if (N < 32) return 0.0;
+
+    double grandMean = 0.0;
+    for (size_t i = start; i < end; i++) {
+        grandMean += timings[i];
+    }
+    grandMean /= N;
+
+    double groupSum[16] = {};
+    double groupSumSq[16] = {};
+    size_t groupCount[16] = {};
+
+    for (size_t i = start; i < end; i++) {
+        uint8_t sboxOut = sboxLookup(targetSbox, sboxInputs[i] ^ k);
+        groupSum[sboxOut] += timings[i];
+        groupSumSq[sboxOut] += timings[i] * timings[i];
+        groupCount[sboxOut]++;
     }
 
-    auto variance = [](const std::vector<uint64_t>& v, double m) {
-        double var = 0.0;
-        for (auto x : v) {
-            double d = static_cast<double>(x) - m; var += d * d; 
+    double SSB = 0.0;
+    double SSW = 0.0;
+    int nGroups = 0;
+
+    for (int g = 0; g < 16; g++) {
+        if (groupCount[g] < 2) continue;
+        nGroups++;
+        double gMean = groupSum[g] / groupCount[g];
+        double d = gMean - grandMean;
+        SSB += groupCount[g] * d * d;
+        SSW += groupSumSq[g] - groupCount[g] * gMean * gMean;
+    }
+
+    if (nGroups > 1 && SSW > 0.0) {
+        double MSB = SSB / (nGroups - 1);
+        double MSW = SSW / (N - nGroups);
+        return MSB / MSW;
+    }
+    return 0.0;
+}
+
+static constexpr int NUM_CHUNKS = 5;
+static constexpr int TOP_K_THRESHOLD = 10;
+
+std::vector<SubkeyResult> attackSbox(const std::vector<Sample>& samples, int targetSbox) {
+    size_t N = samples.size();
+
+    std::vector<uint8_t> sboxInputs(N);
+    std::vector<double> timings(N);
+
+    for (size_t i = 0; i < N; i++) {
+        std::bitset<64> permuted = applyIP(samples[i].plaintext);
+        std::bitset<32> R0 = getRightHalf(permuted);
+        std::bitset<48> expanded = expandHalf(R0);
+        sboxInputs[i] = getSboxInput(expanded, targetSbox);
+        timings[i] = static_cast<double>(samples[i].cycles);
+    }
+
+    // 1. F-stat for each candidate
+    double fullF[64];
+    for (uint8_t k = 0; k < 64; k++) {
+        fullF[k] = computeFStat(sboxInputs, timings, 0, N, targetSbox, k);
+    }
+
+    // 2. Chunk consistency
+    int topKCount[64] = {};
+    size_t chunkSize = N / NUM_CHUNKS;
+
+    for (int c = 0; c < NUM_CHUNKS; c++) {
+        size_t start = c * chunkSize;
+        size_t end = (c == NUM_CHUNKS - 1) ? N : start + chunkSize;
+
+        // Compute F-stat for each candidate for chunk
+        std::vector<std::pair<double, int>> ranked(64);
+        for (uint8_t k = 0; k < 64; k++) {
+            double f = computeFStat(sboxInputs, timings, start, end, targetSbox, k);
+            ranked[k] = { f, k };
         }
-        return var / static_cast<double>(v.size() - 1);
-        };
 
-    double ma = mean(a), mb = mean(b);
-    double va = variance(a, ma), vb = variance(b, mb);
-    double denom = std::sqrt(va / a.size() + vb / b.size());
-    if (denom == 0.0) {
-        return 0.0;
+        std::sort(ranked.begin(), ranked.end(),
+            [](const auto& a, const auto& b) { return a.first > b.first; });
+
+        for (int r = 0; r < TOP_K_THRESHOLD; r++) {
+            topKCount[ranked[r].second]++;
+        }
     }
-    return (mb - ma) / denom;
-}
 
-std::vector<SubkeyResult> attackSbox1(const std::vector<Sample>& samples) {
     std::vector<SubkeyResult> results;
     results.reserve(64);
 
     for (uint8_t k = 0; k < 64; k++) {
-        std::vector<uint64_t> buckets[64];
-        for (auto& b : buckets) {
-            b.reserve(samples.size() / 64);
-        }
+        double consistency = static_cast<double>(topKCount[k]) / NUM_CHUNKS;
+        double combined = fullF[k] * (0.5 + 0.5 * consistency);
 
-        for (const auto& s : samples) {
-            std::bitset<64> permuted = applyIP(s.plaintext);
-            std::bitset<32> R0 = getRightHalf(permuted);
-            std::bitset<48> expanded = expandHalf(R0);
-            uint8_t input6 = getSboxInput(expanded, 0) ^ k;
-            buckets[input6].push_back(s.cycles);
-        }
-
-        double bucketMeans[64] = {};
-        int filled = 0;
-        double grandSum = 0.0;
-
-        for (int b = 0; b < 64; b++) {
-            if (buckets[b].empty()) {
-                continue;
-            }
-            bucketMeans[b] = mean(buckets[b]);
-            grandSum += bucketMeans[b];
-            filled++;
-        }
-
-        if (filled < 2) { 
-            results.push_back({ k, 0.0, 0.0, 0 }); 
-            continue; 
-        }
-
-        double grandMean = grandSum / filled;
-        double var = 0.0;
-        for (int b = 0; b < 64; b++) {
-            if (buckets[b].empty()) {
-                continue;
-            }
-            double d = bucketMeans[b] - grandMean;
-            var += d * d;
-        }
-        var /= (filled - 1);
-
-
-        double minMean = 1e18, maxMean = -1e18;
-        int    minBucket = 0, maxBucket = 0;
-        for (int b = 0; b < 64; ++b) {
-            if (buckets[b].empty()) {
-                continue;
-            }
-            if (bucketMeans[b] < minMean) {
-                minMean = bucketMeans[b]; minBucket = b; 
-            }
-            if (bucketMeans[b] > maxMean) {
-                maxMean = bucketMeans[b]; maxBucket = b; 
-            }
-        }
-        double tStat = (maxBucket != minBucket) ? std::abs(welchT(buckets[minBucket], buckets[maxBucket])): 0.0;
-
-        results.push_back({ k, var, tStat, static_cast<uint8_t>(maxBucket) });
+        results.push_back({ k, combined, fullF[k], static_cast<uint8_t>(topKCount[k]) });
     }
 
-    std::sort(results.begin(), results.end(), 
+    // Sort by combined score descending
+    std::sort(results.begin(), results.end(),
         [](const SubkeyResult& a, const SubkeyResult& b) {
             return a.meanDiff > b.meanDiff;
         });
@@ -171,16 +180,17 @@ std::vector<SubkeyResult> attackSbox1(const std::vector<Sample>& samples) {
 }
 
 void printResults(const std::vector<SubkeyResult>& results, size_t topK) {
-    std::printf("%-12s %-16s %-12s %-10s\n",
-        "Candidate", "BucketVarScore", "t-stat", "MaxMissBucket");
-    std::printf("%s\n", std::string(54, '-').c_str());
+    std::printf("%-12s %-14s %-14s %s\n",
+        "Candidate", "Combined", "Full F-stat", "Consistency");
+    std::printf("%s\n", std::string(56, '-').c_str());
 
     size_t limit = std::min(topK, results.size());
     for (size_t i = 0; i < limit; i++)
     {
         const auto& r = results[i];
-        std::printf("0x%02X (%-2u)    %-16.4f %-12.4f %u\n",
+        std::printf("0x%02X (%-2u)    %-14.4f %-14.4f %d/%d\n",
             r.candidate, r.candidate,
-            r.meanDiff, r.tStat, r.coldLine);
+            r.meanDiff, r.tStat,
+            r.coldLine, NUM_CHUNKS);
     }
 }

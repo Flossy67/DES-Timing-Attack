@@ -1,16 +1,21 @@
 #include "DESEncryption.h"
-#include <bitset>
 #include "DESTable.h"
-#include <cstdint>
 
-DES::PaddedSBoxEntry DES::PaddedSBoxes[8][4][16];
+#include <bitset>
+#include <cstdint>
+#include <string.h>
+
+DES::PaddedSBoxHalf DES::PaddedSBoxHalves[8][2];
 
 void DES::initPaddedSBoxes() {
 	for (int s = 0; s < 8; s++) {
+		std::memset(&PaddedSBoxHalves[s][0], 0, sizeof(PaddedSBoxHalf));
+		std::memset(&PaddedSBoxHalves[s][1], 0, sizeof(PaddedSBoxHalf));
 		for (int r = 0; r < 4; r++) {
+			int half = r / 2;      // rows 0,1 -> half 0; rows 2,3 -> half 1
+			int slot = r % 2;      // position within half
 			for (int c = 0; c < 16; c++) {
-				std::memset(&PaddedSBoxes[s][r][c], 0, sizeof(PaddedSBoxEntry));
-				PaddedSBoxes[s][r][c].value = SBoxes[s][r][c];
+				PaddedSBoxHalves[s][half].value[slot][c] = SBoxes[s][r][c];
 			}
 		}
 	}
@@ -53,7 +58,7 @@ std::bitset<48> DES::expand(const std::bitset<32>& half_block)
 std::bitset<32> DES::fFunction(const std::bitset<32>& half_block, const std::bitset<48>& round_key)
 {
 	std::bitset<48> expanded = expand(half_block) ^ round_key;
-	std::bitset<32> substituted = substitute(expanded);
+	std::bitset<32> substituted = substituePadded(expanded);
 	std::bitset<32> permuted = permute(substituted);
 	return permuted;
 }
@@ -75,19 +80,17 @@ std::bitset<32> DES::substitute(const std::bitset<48>& expanded)
 	return std::bitset<32>(output);
 }
 
-std::bitset<32> DES::substituePadded(const std::bitset<48>& expanded)
-{
+std::bitset<32> DES::substituePadded(const std::bitset<48>& expanded) {
 	uint64_t input = expanded.to_ullong();
 	uint64_t output = 0;
-
 	for (int i = 0; i < 8; i++) {
 		uint8_t shift = 48 - 6 * (i + 1);
 		std::bitset<6> six_bits((input >> shift) & 0x3F);
-
 		uint8_t row = six_bits[5] << 1 | six_bits[0];
 		uint8_t col = six_bits[4] << 3 | six_bits[3] << 2 | six_bits[2] << 1 | six_bits[1];
-
-		output |= static_cast<uint32_t>(PaddedSBoxes[i][row][col].value) << (32 - 4 * (i + 1));
+		int half = row / 2;
+		int slot = row % 2;
+		output |= static_cast<uint32_t>(PaddedSBoxHalves[i][half].value[slot][col]) << (32 - 4 * (i + 1));
 	}
 	return std::bitset<32>(output);
 }
@@ -100,3 +103,4 @@ std::bitset<32> DES::permute(const std::bitset<32>& input)
 	}
 	return permuted;
 }
+

@@ -10,5 +10,5 @@ struct SubkeyResult {
 	uint8_t coldLine;
 };
 
-std::vector<SubkeyResult> attackSbox1(const std::vector <Sample>& samples);
+std::vector<SubkeyResult> attackSbox(const std::vector <Sample>& samples, int targetSbox);
 void printResults(const std::vector<SubkeyResult>& results, size_t topK = 10);

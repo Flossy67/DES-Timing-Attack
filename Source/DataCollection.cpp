@@ -2,6 +2,7 @@
 #include "Timing.h"
 #include "DESEncryption.h"
 #include "KeyExpansion.h"
+#include "DESTable.h"
 
 #include <random>
 #include <fstream>
@@ -35,8 +36,8 @@ static void rejectOutliers(std::vector<Sample>& samples) {
     std::nth_element(devs.begin(), madMid, devs.end());
 	uint64_t mad = *madMid;
 
-    uint64_t low = (med > 5 * mad) ? med - 5 * mad : 0;
-    uint64_t high = med + 5 * mad;
+    uint64_t low = (med > 3 * mad) ? med - 3 * mad : 0;
+    uint64_t high = med + 3 * mad;
 
     samples.erase(
         std::remove_if(samples.begin(), samples.end(),
@@ -75,12 +76,19 @@ std::vector<Sample> collectSamples(uint64_t key, uint64_t seed, size_t n, size_t
             flushSboxCache();
         }
 
+        std::bitset<64> block;
+        for (int j = 0; j < 64; j++) {
+            block[63 - j] = ptBits[i][64 - DES::IP[j]];
+        }
+        std::bitset<32> R0(block.to_ullong() & 0xFFFFFFFF);
+        std::bitset<48> expanded = DES::expand(R0) ^ subkeys[0];
+
         uint64_t t0 = rdtsc_start();
-        std::bitset<64> ct = DES::encrypt(ptBits[i], subkeys);
+        auto result = DES::substituePadded(expanded);
         uint64_t t1 = rdtsc_end();
 
-        sink ^= ct.to_ullong();
-		samples.push_back({ plaintexts[i], t1 - t0 });
+        sink ^= result.to_ullong();
+        samples.push_back({ plaintexts[i], t1 - t0 });
     }
 
     (void)sink;
